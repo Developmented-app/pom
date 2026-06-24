@@ -30,7 +30,7 @@ import Settings from './components/Settings';
 interface PowerEvent {
   id: string;
   timestamp: string;
-  eventType: 'plugged' | 'unplugged';
+  eventType: 'plugged' | 'unplugged' | 'level_change';
   batteryLevel: number;
 }
 
@@ -163,11 +163,12 @@ export default function App() {
     localStorage.setItem('pos_power_events', JSON.stringify(powerEvents));
   }, [powerEvents]);
 
-  // Handle power transition logging
+  // Handle power transition and level change logging
   useEffect(() => {
+    const now = new Date();
+    const timestamp = now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+
     if (prevChargingRef.current !== isCharging) {
-      const now = new Date();
-      const timestamp = now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
       const newEvent: PowerEvent = {
         id: `evt-${Math.random().toString(36).substring(2, 9)}`,
         timestamp,
@@ -176,6 +177,21 @@ export default function App() {
       };
       setPowerEvents(prev => [newEvent, ...prev].slice(0, 15));
       prevChargingRef.current = isCharging;
+    } else {
+      // Log battery level changes as well
+      setPowerEvents(prev => {
+        const lastEvent = prev[0];
+        if (lastEvent && lastEvent.batteryLevel !== batteryLevel) {
+          const newEvent: PowerEvent = {
+            id: `evt-${Math.random().toString(36).substring(2, 9)}`,
+            timestamp,
+            eventType: 'level_change',
+            batteryLevel
+          };
+          return [newEvent, ...prev].slice(0, 15);
+        }
+        return prev;
+      });
     }
   }, [isCharging, batteryLevel]);
 
@@ -208,6 +224,13 @@ export default function App() {
     }, isPowerSavingMode ? 30000 : 15000); // 30 seconds when power saving, 15 seconds otherwise
     return () => clearInterval(interval);
   }, [isCharging, isPowerSavingMode]);
+
+  // Automatically trigger Power Saving Mode at 20% or lower
+  useEffect(() => {
+    if (batteryLevel <= 20) {
+      setIsPowerSavingMode(true);
+    }
+  }, [batteryLevel]);
 
   // Clock Update Effect
   useEffect(() => {
@@ -512,7 +535,97 @@ export default function App() {
                   </button>
                 </div>
 
-                <div className="space-y-1.5 max-h-48 overflow-y-auto custom-scrollbar flex flex-col" id="power_history_list">
+                {/* Inline SVG Sparkline Chart */}
+                {(() => {
+                  const chartData = [...powerEvents].reverse();
+                  const levels = chartData.map(d => d.batteryLevel);
+                  let minVal = Math.min(...levels);
+                  let maxVal = Math.max(...levels);
+                  if (minVal === maxVal) {
+                    minVal = Math.max(0, minVal - 5);
+                    maxVal = Math.min(100, maxVal + 5);
+                  } else {
+                    const pad = (maxVal - minVal) * 0.1 || 1;
+                    minVal = Math.max(0, minVal - pad);
+                    maxVal = Math.min(100, maxVal + pad);
+                  }
+
+                  const width = 224;
+                  const height = 44;
+                  const padX = 8;
+                  const padY = 6;
+
+                  const points = chartData.map((d, i) => {
+                    const x = padX + (chartData.length > 1 ? (i / (chartData.length - 1)) * (width - 2 * padX) : 0);
+                    const y = height - padY - ((d.batteryLevel - minVal) / (maxVal - minVal)) * (height - 2 * padY);
+                    return { x, y, level: d.batteryLevel, eventType: d.eventType, timestamp: d.timestamp };
+                  });
+
+                  const pathD = points.length > 0 
+                    ? `M ${points[0].x} ${points[0].y} ` + points.slice(1).map(p => `L ${p.x} ${p.y}`).join(' ')
+                    : '';
+
+                  const areaD = points.length > 0
+                    ? `${pathD} L ${points[points.length - 1].x} ${height} L ${points[0].x} ${height} Z`
+                    : '';
+
+                  return (
+                    <div className="bg-slate-950/80 border border-slate-800/60 rounded-lg p-2 mb-2.5 flex flex-col gap-1.5" id="power_sparkline_widget">
+                      <div className="flex justify-between items-center text-[9px] text-slate-400 font-mono px-0.5" id="sparkline_meta">
+                        <span>Trend (Last 15 events)</span>
+                        <span className={`${isCharging ? 'text-emerald-400' : 'text-amber-400'} font-semibold`}>
+                          {minVal.toFixed(0)}% - {maxVal.toFixed(0)}%
+                        </span>
+                      </div>
+                      <div className="relative h-11 w-full bg-slate-900/40 rounded border border-slate-800/40 p-0.5 flex items-center justify-center overflow-hidden" id="sparkline_canvas_box">
+                        {chartData.length < 2 ? (
+                          <span className="text-[10px] text-slate-500 font-sans italic">Logging history...</span>
+                        ) : (
+                          <svg className="w-full h-11 overflow-visible" viewBox={`0 0 ${width} ${height}`} id="sparkline_svg">
+                            <defs>
+                              <linearGradient id="sparklineGrad" x1="0" y1="0" x2="0" y2="1">
+                                <stop offset="0%" stopColor="#818cf8" stopOpacity="0.3" />
+                                <stop offset="100%" stopColor="#818cf8" stopOpacity="0.0" />
+                              </linearGradient>
+                            </defs>
+                            {areaD && <path d={areaD} fill="url(#sparklineGrad)" />}
+                            {pathD && (
+                              <path 
+                                d={pathD} 
+                                fill="none" 
+                                stroke="#818cf8" 
+                                strokeWidth="1.5" 
+                                strokeLinecap="round" 
+                                strokeLinejoin="round" 
+                              />
+                            )}
+                            {points.map((p, idx) => {
+                              const isSpecial = p.eventType === 'plugged' || p.eventType === 'unplugged';
+                              return (
+                                <circle 
+                                  key={idx}
+                                  cx={p.x}
+                                  cy={p.y}
+                                  r={isSpecial ? 3 : 1.5}
+                                  className={`transition-all duration-300 ${
+                                    isSpecial 
+                                      ? p.eventType === 'plugged' 
+                                        ? 'fill-emerald-400 stroke-slate-900 stroke-[1px]' 
+                                        : 'fill-amber-400 stroke-slate-900 stroke-[1px]'
+                                      : 'fill-indigo-400/80'
+                                  }`}
+                                  title={`${p.level}% - ${p.eventType === 'plugged' ? 'Plugged' : p.eventType === 'unplugged' ? 'Unplugged' : 'Level Changed'} at ${p.timestamp}`}
+                                />
+                              );
+                            })}
+                          </svg>
+                        )}
+                      </div>
+                    </div>
+                  );
+                })()}
+
+                <div className="space-y-1.5 max-h-40 overflow-y-auto custom-scrollbar flex flex-col" id="power_history_list">
                   {powerEvents.length === 0 ? (
                     <span className="text-[10px] text-slate-500 py-4 text-center">No power events logged.</span>
                   ) : (
@@ -525,11 +638,23 @@ export default function App() {
                         <div className="flex items-center gap-1.5">
                           {evt.eventType === 'plugged' ? (
                             <Plug className="h-3.5 w-3.5 text-emerald-400 shrink-0" />
+                          ) : evt.eventType === 'unplugged' ? (
+                            <Battery className="h-3.5 w-3.5 text-rose-500 shrink-0" />
                           ) : (
-                            <Battery className="h-3.5 w-3.5 text-amber-400 shrink-0" />
+                            <Battery className="h-3.5 w-3.5 text-slate-400 shrink-0" />
                           )}
-                          <span className={`font-semibold ${evt.eventType === 'plugged' ? 'text-emerald-400' : 'text-amber-400'}`}>
-                            {evt.eventType === 'plugged' ? 'AC Connected' : 'Unplugged'}
+                          <span className={`font-semibold ${
+                            evt.eventType === 'plugged' 
+                              ? 'text-emerald-400' 
+                              : evt.eventType === 'unplugged' 
+                                ? 'text-rose-400' 
+                                : 'text-slate-300'
+                          }`}>
+                            {evt.eventType === 'plugged' 
+                              ? 'AC Connected' 
+                              : evt.eventType === 'unplugged' 
+                                ? 'AC Disconnected' 
+                                : 'Level Update'}
                           </span>
                         </div>
                         <div className="flex items-center gap-2 font-mono text-[10px] text-slate-400 shrink-0">
