@@ -17,7 +17,9 @@ import {
   BatteryCharging,
   Leaf,
   History,
-  Plug
+  Plug,
+  AlertTriangle,
+  X
 } from 'lucide-react';
 import { Product, CartItem, SaleTransaction, StoreSettings } from './types';
 import { DEFAULT_PRODUCTS, DEFAULT_SETTINGS, CATEGORIES } from './constants';
@@ -154,6 +156,33 @@ export default function App() {
     ];
   });
   const [showPowerHistory, setShowPowerHistory] = useState<boolean>(false);
+
+  // Battery Alert Toast notification state
+  const [batteryAlert, setBatteryAlert] = useState<{
+    show: boolean;
+    message: string;
+    type: 'critical' | 'warning';
+  } | null>(null);
+
+  // Monitor critical battery alert (below 10% when discharging)
+  useEffect(() => {
+    if (batteryLevel < 10 && !isCharging) {
+      setBatteryAlert(prev => {
+        // If it was already dismissed and battery level is still the same, keep dismissed
+        if (prev && !prev.show) {
+          return prev;
+        }
+        return {
+          show: true,
+          message: "System is entering 'Critical Battery Mode' and may shut down soon. Please connect AC power.",
+          type: 'critical'
+        };
+      });
+    } else {
+      // Clear alert when plugged in or charged back above 10%
+      setBatteryAlert(null);
+    }
+  }, [batteryLevel, isCharging]);
 
   // Ref to track charging transitions
   const prevChargingRef = React.useRef(isCharging);
@@ -339,8 +368,36 @@ export default function App() {
     <div className={`min-h-screen ${isPowerSavingMode ? 'bg-slate-200/90 brightness-[0.93]' : 'bg-slate-100'} transition-all duration-500 ease-in-out flex flex-col font-sans`} id="pos_app_container">
       
       {/* APP TOP NAVIGATION HEADER */}
-      <header className="bg-slate-900 text-white px-6 py-4 shadow-md flex flex-col md:flex-row justify-between items-center shrink-0 border-b border-slate-800" id="pos_header">
+      <header className="relative bg-slate-900 text-white px-6 py-4 shadow-md flex flex-col md:flex-row justify-between items-center shrink-0 border-b border-slate-800" id="pos_header">
         
+        {/* Critical Battery Toast Banner */}
+        {batteryAlert && batteryAlert.show && (
+          <div 
+            className="absolute inset-x-0 top-0 bg-rose-600 text-white px-6 py-2.5 flex items-center justify-between gap-4 z-50 animate-in slide-in-from-top duration-300 shadow-md border-b border-rose-700"
+            id="critical_battery_toast"
+          >
+            <div className="flex items-center gap-3">
+              <span className="relative flex h-2.5 w-2.5">
+                <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-white opacity-75"></span>
+                <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-red-100"></span>
+              </span>
+              <AlertTriangle className="h-4 w-4 text-white shrink-0 animate-bounce" />
+              <div className="text-xs font-semibold leading-tight">
+                <span className="font-extrabold uppercase bg-red-800/60 px-1.5 py-0.5 rounded mr-2 tracking-wide text-[10px]">Critical Battery Mode</span>
+                {batteryAlert.message}
+              </div>
+            </div>
+            <button 
+              onClick={() => setBatteryAlert(prev => prev ? { ...prev, show: false } : null)}
+              className="p-1 rounded-full hover:bg-white/10 text-white transition-colors cursor-pointer focus:outline-none"
+              title="Dismiss warning"
+              id="close_critical_battery_toast"
+            >
+              <X className="h-4 w-4" />
+            </button>
+          </div>
+        )}
+
         {/* Left Side: Store profile info */}
         <div className="flex items-center gap-3.5 mb-3 md:mb-0" id="header_store_profile">
           <div className="bg-slate-800 p-2.5 rounded-xl border border-slate-700 shadow-inner">
