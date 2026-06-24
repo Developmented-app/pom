@@ -1,0 +1,6 @@
+{
+  "name": "Retail POS System",
+  "description": "A comprehensive point-of-sale system for small retail businesses featuring interactive checkout, real-time inventory tracking, secure simulated payment processing, and detailed sales analytics.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
